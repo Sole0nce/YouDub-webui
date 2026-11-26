@@ -14,8 +14,18 @@ export type ResourceState = {
 type ResourceSnapshot = { result?: ResourceState; inventory?: ResourceInventory; inspection?: ResourcePreparation; error?: string; checking: boolean }
 export type WorkflowResourcesResult = ResourceSnapshot & { ready: boolean; prepare(): void; check(): void; action(action: SetupAction, id?: string): void }
 
+function coverSourceNeedsFfmpeg(document: WorkflowDocument, nodeId: string): boolean {
+  const edge = (document.edges ?? []).find((item) => item.target.nodeId === nodeId && item.target.portId === 'cover')
+  if (!edge) return false
+  if (edge.source.nodeId === '$inputs') {
+    const schema = document.inputs?.find((inp) => inp.id === edge.source.portId)?.schemaId ?? ''
+    return !schema.startsWith('image/')
+  }
+  const sourceNode = document.nodes.find((item) => item.id === edge.source.nodeId)
+  return sourceNode?.type !== 'youdub.download' && edge.source.portId !== 'cover'
+}
 export function resourceKey(document: WorkflowDocument) {
-  return JSON.stringify([...new Set(document.nodes.map(node => JSON.stringify([node.type, node.typeVersion, node.provider.id, node.provider.model ?? null, node.type === 'youdub.align' ? String(node.config.targetLanguage ?? 'zh') : null])))].sort())
+  return JSON.stringify([...new Set(document.nodes.map(node => JSON.stringify([node.type, node.typeVersion, node.provider.id, node.provider.model ?? null, node.type === 'youdub.align' ? String(node.config.targetLanguage ?? 'zh') : node.type === 'youdub.translateCover' ? (coverSourceNeedsFfmpeg(document, node.id) ? 'ffmpeg' : 'image') : null])))].sort())
 }
 export function changesResources(path: string, method: string, body?: BodyInit | null) {
   if (path === '/api/settings' && method === 'PATCH') {
@@ -24,7 +34,7 @@ export function changesResources(path: string, method: string, body?: BodyInit |
     return Object.keys(patch).some(key => key !== 'ui_language' && key !== 'theme')
   }
   return method === 'POST' && /^\/api\/(?:resources\/(?:prepare|action|yt-dlp\/update)|workflow-documents\/resources\/prepare)$/.test(path)
-    || ((path.startsWith('/api/llm/') && ['PUT', 'DELETE'].includes(method)))
+    || ((path.startsWith('/api/llm/') || path.startsWith('/api/image/')) && ['PUT', 'DELETE'].includes(method))
 }
 
 /** One API session owns a check for each distinct provider/model requirement set. */
